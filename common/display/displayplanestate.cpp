@@ -249,8 +249,7 @@ void DisplayPlaneState::RefreshLayerRects(
     const HwcRect<float> &source_crop = layer.GetSourceCrop();
     CalculateRect(df, target_display_frame);
     CalculateSourceRect(source_crop, target_source_crop);
-    if (!layer.IsCursorLayer() &&
-        (layer.HasDimensionsChanged() || layer.HasSourceRectChanged())) {
+    if (!layer.IsCursorLayer() && (layer.HasDimensionsChanged())) {
       only_cursor_layer = false;
     }
 
@@ -474,12 +473,14 @@ bool DisplayPlaneState::IsVideoPlane() const {
 }
 
 void DisplayPlaneState::SetVideoPlane(bool enable_video) {
+#ifndef DISABLE_VA
   if (enable_video) {
     private_data_->type_ = DisplayPlanePrivateState::PlaneType::kVideo;
     private_data_->supports_video_ = true;
   } else {
     private_data_->type_ = DisplayPlanePrivateState::PlaneType::kNormal;
   }
+#endif
 }
 
 void DisplayPlaneState::UsePlaneScalar(bool enable, bool force_refresh) {

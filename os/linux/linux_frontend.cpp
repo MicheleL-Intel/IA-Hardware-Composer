@@ -104,7 +104,8 @@ int32_t IAHWC::Init() {
     return IAHWC_ERROR_NO_RESOURCES;
   }
 
-  std::vector<hwcomposer::NativeDisplay*> displays = device_.GetAllDisplays();
+  const std::vector<hwcomposer::NativeDisplay*>& displays =
+      device_.GetAllDisplays();
 
   for (hwcomposer::NativeDisplay* display : displays) {
     displays_.emplace_back(new IAHWCDisplay());
@@ -293,6 +294,7 @@ int IAHWC::IAHWCDisplay::Init(hwcomposer::NativeDisplay* display,
   native_display_->InitializeLayerHashGenerator(4);
   raw_data_uploader_ =
       new PixelUploader(native_display_->GetNativeBufferHandler());
+  return 0;
 }
 
 int IAHWC::IAHWCDisplay::GetDisplayInfo(uint32_t config, int attribute,
@@ -412,6 +414,7 @@ int IAHWC::IAHWCDisplay::RunPixelUploader(bool enable) {
     raw_data_uploader_->Initialize();
   else
     raw_data_uploader_->ExitThread();
+  return 0;
 }
 
 int IAHWC::IAHWCDisplay::CreateLayer(uint32_t* layer_handle) {
@@ -496,19 +499,6 @@ int IAHWC::IAHWCLayer::SetBo(gbm_bo* bo) {
   width = gbm_bo_get_width(bo);
   height = gbm_bo_get_height(bo);
 
-#if USE_MINIGBM
-  hwc_handle_.import_data.width = width;
-  hwc_handle_.import_data.height = height;
-  hwc_handle_.import_data.format = gbm_bo_get_format(bo);
-
-  size_t total_planes = gbm_bo_get_num_planes(bo);
-  for (size_t i = 0; i < total_planes; i++) {
-    hwc_handle_.import_data.fds[i] = gbm_bo_get_plane_fd(bo, i);
-    hwc_handle_.import_data.offsets[i] = gbm_bo_get_plane_offset(bo, i);
-    hwc_handle_.import_data.strides[i] = gbm_bo_get_plane_stride(bo, i);
-  }
-  temp->meta_data_.num_planes_ = total_planes;
-#else
   hwc_handle_.import_data.fd_data.width = width;
   hwc_handle_.import_data.fd_data.height = height;
   hwc_handle_.import_data.fd_data.format = gbm_bo_get_format(bo);
@@ -516,7 +506,6 @@ int IAHWC::IAHWCLayer::SetBo(gbm_bo* bo) {
   hwc_handle_.import_data.fd_data.stride = gbm_bo_get_stride(bo);
   hwc_handle_.meta_data_.num_planes_ =
       drm_bo_get_num_planes(hwc_handle_.import_data.fd_data.format);
-#endif
 
   hwc_handle_.bo = bo;
   hwc_handle_.hwc_buffer_ = true;
@@ -679,27 +668,11 @@ hwcomposer::HwcLayer* IAHWC::IAHWCLayer::GetLayer() {
 }
 
 void IAHWC::IAHWCLayer::ClosePrimeHandles() {
-#if USE_MINIGBM
-  size_t total_planes = hwc_handle_.meta_data_.num_planes_;
-  bool reset = false;
-  for (size_t i = 0; i < total_planes; i++) {
-    uint32_t fd = hwc_handle_.import_data.fds[i];
-    if (fd > 0) {
-      reset = true;
-      ::close(fd);
-    }
-  }
-
-  if (reset) {
-    memset(&hwc_handle_.import_data, 0, sizeof(hwc_handle_.import_data));
-  }
-#else
   if (hwc_handle_.import_data.fd_data.fd > 0) {
     ::close(hwc_handle_.import_data.fd_data.fd);
     memset(&hwc_handle_.import_data, 0, sizeof(hwc_handle_.import_data));
     memset(&hwc_handle_.meta_data_, 0, sizeof(hwc_handle_.meta_data_));
   }
-#endif
 }
 
 }  // namespace hwcomposer

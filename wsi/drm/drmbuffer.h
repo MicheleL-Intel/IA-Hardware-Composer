@@ -18,6 +18,7 @@
 
 #include <platformdefines.h>
 
+#include "framebuffermanager.h"
 #include "overlaybuffer.h"
 
 namespace hwcomposer {
@@ -33,23 +34,24 @@ class DrmBuffer : public OverlayBuffer {
 
   ~DrmBuffer() override;
 
-  void InitializeFromNativeHandle(HWCNativeHandle handle,
-                                  ResourceManager* buffer_manager) override;
+  void InitializeFromNativeHandle(
+      HWCNativeHandle handle, ResourceManager* buffer_manager,
+      FrameBufferManager* frame_buffer_manager) override;
 
   uint32_t GetWidth() const override {
-    return width_;
+      return image_.handle_->meta_data_.width_;
   }
 
   uint32_t GetHeight() const override {
-    return height_;
+    return image_.handle_->meta_data_.height_;
   }
 
   uint32_t GetFormat() const override {
-    return format_;
+    return image_.handle_->meta_data_.format_;
   }
 
   HWCLayerType GetUsage() const override {
-    return usage_;
+    return image_.handle_->meta_data_.usage_;
   }
 
   uint32_t GetFb() const override {
@@ -61,15 +63,19 @@ class DrmBuffer : public OverlayBuffer {
   }
 
   const uint32_t* GetPitches() const override {
-    return pitches_;
+    return image_.handle_->meta_data_.pitches_;
   }
 
   const uint32_t* GetOffsets() const override {
-    return offsets_;
+    return image_.handle_->meta_data_.offsets_;
   }
 
   uint32_t GetTilingMode() const override {
-    return tiling_mode_;
+    return image_.handle_->meta_data_.tiling_mode_;
+  }
+
+  uint32_t GetNumPlanes() const {
+    return image_.handle_->meta_data_.num_planes_;
   }
 
   const ResourceHandle& GetGpuResource(GpuDisplay egl_display,
@@ -95,14 +101,12 @@ class DrmBuffer : public OverlayBuffer {
 
  private:
   void Initialize(const HwcBuffer& bo);
+  void SaveMetaData(const HwcBuffer& bo);
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   uint32_t format_ = 0;
   uint32_t tiling_mode_ = 0;
   uint32_t frame_buffer_format_ = 0;
-  uint32_t pitches_[4];
-  uint32_t offsets_[4];
-  uint32_t gem_handles_[4];
   HWCLayerType usage_ = kLayerNormal;
   uint32_t previous_width_ = 0;   // For Media usage.
   uint32_t previous_height_ = 0;  // For Media usage.
@@ -110,6 +114,7 @@ class DrmBuffer : public OverlayBuffer {
   ResourceHandle image_;
   MediaResourceHandle media_image_;
   HWCNativeHandle original_handle_;
+  FrameBufferManager* fb_manager_ = NULL;
 };
 
 }  // namespace hwcomposer

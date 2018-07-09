@@ -28,9 +28,11 @@
 #include "hwctrace.h"
 #include "hwcutils.h"
 #include "resourcemanager.h"
-#include "vautils.h"
 
+#ifndef DISABLE_VA
 #include <va/va_drmcommon.h>
+#include "vautils.h"
+#endif
 
 #ifndef EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT
 #define EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT 0x3443
@@ -58,6 +60,7 @@ DrmBuffer::~DrmBuffer() {
   texture_initialized = image_.texture_ != VK_NULL_HANDLE;
 #endif
 
+#ifndef DISABLE_VA
   if (media_image_.surface_ == VA_INVALID_ID) {
     resource_manager_->MarkResourceForDeletion(image_, texture_initialized);
   } else {
@@ -69,25 +72,48 @@ DrmBuffer::~DrmBuffer() {
 
     resource_manager_->MarkMediaResourceForDeletion(media_image_);
   }
+#else
+  resource_manager_->MarkResourceForDeletion(image_, texture_initialized);
+#endif
+}
+
+void DrmBuffer::SaveMetaData(const HwcBuffer& bo) {
+  image_.handle_->meta_data_.width_ = bo.width_;
+  image_.handle_->meta_data_.height_ = bo.height_;
+  image_.handle_->meta_data_.format_ = bo.format_;
+  image_.handle_->meta_data_.tiling_mode_ = bo.tiling_mode_;
+  image_.handle_->meta_data_.native_format_ = bo.native_format_;
+  image_.handle_->meta_data_.num_planes_ = bo.num_planes_;
+  image_.handle_->meta_data_.usage_ = bo.usage_; /* defaulted: kLayerNormal */
+
+  for (uint32_t i = 0; i < 4; i++) {
+    image_.handle_->meta_data_.pitches_[i] = bo.pitches_[i];
+    image_.handle_->meta_data_.offsets_[i] = bo.offsets_[i];
+    image_.handle_->meta_data_.gem_handles_[i] = bo.gem_handles_[i];
+    image_.handle_->meta_data_.prime_fds_[i] = bo.prime_fds_[i];
+  }
+
+  for (uint32_t i = 0; i < 8; i++) {
+    image_.handle_->meta_data_.fb_modifiers_[i] = bo.fb_modifiers_[i];
+  }
 }
 
 void DrmBuffer::Initialize(const HwcBuffer& bo) {
   width_ = bo.width_;
   height_ = bo.height_;
-  for (uint32_t i = 0; i < 4; i++) {
-    pitches_[i] = bo.pitches_[i];
-    offsets_[i] = bo.offsets_[i];
-    gem_handles_[i] = bo.gem_handles_[i];
-  }
 
-  format_ = bo.format_;
+  SaveMetaData(bo);
+  width_ = GetWidth();
+  height_ = GetHeight();
+
+  format_ = GetFormat();
   if (format_ == DRM_FORMAT_NV12_Y_TILED_INTEL || format_ == DRM_FORMAT_NV21)
     format_ = DRM_FORMAT_NV12;
   else if (format_ == DRM_FORMAT_YVU420_ANDROID)
     format_ = DRM_FORMAT_YUV420;
 
-  tiling_mode_ = bo.tiling_mode_;
-  usage_ = bo.usage_;
+  tiling_mode_ = GetTilingMode();
+  usage_ = GetUsage();
 
   if (usage_ == hwcomposer::kLayerCursor) {
     // We support DRM_FORMAT_ARGB8888 for cursor.
@@ -96,13 +122,14 @@ void DrmBuffer::Initialize(const HwcBuffer& bo) {
     frame_buffer_format_ = format_;
   }
 
-  FrameBufferManager::GetInstance()->RegisterGemHandles(
-      image_.handle_->meta_data_.num_planes_,
-      image_.handle_->meta_data_.gem_handles_);
+  fb_manager_->RegisterGemHandles(image_.handle_->meta_data_.num_planes_,
+                                  image_.handle_->meta_data_.gem_handles_);
 }
 
-void DrmBuffer::InitializeFromNativeHandle(HWCNativeHandle handle,
-                                           ResourceManager* resource_manager) {
+void DrmBuffer::InitializeFromNativeHandle(
+    HWCNativeHandle handle, ResourceManager* resource_manager,
+    FrameBufferManager* frame_buffer_manager) {
+  fb_manager_ = frame_buffer_manager;
   resource_manager_ = resource_manager;
   const NativeBufferHandler* handler =
       resource_manager_->GetNativeBufferHandler();
@@ -138,15 +165,15 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
             EGL_DMA_BUF_PLANE0_FD_EXT,
             static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[0]),
             EGL_DMA_BUF_PLANE0_PITCH_EXT,
-            static_cast<EGLint>(pitches_[0]),
+            static_cast<EGLint>(image_.handle_->meta_data_.pitches_[0]),
             EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-            static_cast<EGLint>(offsets_[0]),
+            static_cast<EGLint>(image_.handle_->meta_data_.offsets_[0]),
             EGL_DMA_BUF_PLANE1_FD_EXT,
             static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[1]),
             EGL_DMA_BUF_PLANE1_PITCH_EXT,
-            static_cast<EGLint>(pitches_[1]),
+            static_cast<EGLint>(image_.handle_->meta_data_.pitches_[1]),
             EGL_DMA_BUF_PLANE1_OFFSET_EXT,
-            static_cast<EGLint>(offsets_[1]),
+            static_cast<EGLint>(image_.handle_->meta_data_.offsets_[1]),
             EGL_NONE,
             0};
         image = eglCreateImageKHR(
@@ -163,21 +190,21 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
             EGL_DMA_BUF_PLANE0_FD_EXT,
             static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[0]),
             EGL_DMA_BUF_PLANE0_PITCH_EXT,
-            static_cast<EGLint>(pitches_[0]),
+            static_cast<EGLint>(image_.handle_->meta_data_.pitches_[0]),
             EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-            static_cast<EGLint>(offsets_[0]),
+            static_cast<EGLint>(image_.handle_->meta_data_.offsets_[0]),
             EGL_DMA_BUF_PLANE1_FD_EXT,
             static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[1]),
             EGL_DMA_BUF_PLANE1_PITCH_EXT,
-            static_cast<EGLint>(pitches_[1]),
+            static_cast<EGLint>(image_.handle_->meta_data_.pitches_[1]),
             EGL_DMA_BUF_PLANE1_OFFSET_EXT,
-            static_cast<EGLint>(offsets_[1]),
+            static_cast<EGLint>(image_.handle_->meta_data_.offsets_[1]),
             EGL_DMA_BUF_PLANE2_FD_EXT,
             static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[2]),
             EGL_DMA_BUF_PLANE2_PITCH_EXT,
-            static_cast<EGLint>(pitches_[2]),
+            static_cast<EGLint>(image_.handle_->meta_data_.pitches_[2]),
             EGL_DMA_BUF_PLANE2_OFFSET_EXT,
-            static_cast<EGLint>(offsets_[2]),
+            static_cast<EGLint>(image_.handle_->meta_data_.offsets_[2]),
             EGL_NONE,
             0};
         image = eglCreateImageKHR(
@@ -200,9 +227,9 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
           EGL_DMA_BUF_PLANE0_FD_EXT,
           static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[0]),
           EGL_DMA_BUF_PLANE0_PITCH_EXT,
-          static_cast<EGLint>(pitches_[0]),
+          static_cast<EGLint>(image_.handle_->meta_data_.pitches_[0]),
           EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-          static_cast<EGLint>(offsets_[0]),
+          static_cast<EGLint>(image_.handle_->meta_data_.offsets_[0]),
           EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
           modifier_low,
           EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
@@ -210,9 +237,9 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
           EGL_DMA_BUF_PLANE1_FD_EXT,
           static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[1]),
           EGL_DMA_BUF_PLANE1_PITCH_EXT,
-          static_cast<EGLint>(pitches_[1]),
+          static_cast<EGLint>(image_.handle_->meta_data_.pitches_[1]),
           EGL_DMA_BUF_PLANE1_OFFSET_EXT,
-          static_cast<EGLint>(offsets_[1]),
+          static_cast<EGLint>(image_.handle_->meta_data_.offsets_[1]),
           EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,
           modifier_low,
           EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,
@@ -234,7 +261,7 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
           EGL_DMA_BUF_PLANE0_FD_EXT,
           static_cast<EGLint>(image_.handle_->meta_data_.prime_fds_[0]),
           EGL_DMA_BUF_PLANE0_PITCH_EXT,
-          static_cast<EGLint>(pitches_[0]),
+          static_cast<EGLint>(image_.handle_->meta_data_.pitches_[0]),
           EGL_DMA_BUF_PLANE0_OFFSET_EXT,
           0,
           EGL_NONE,
@@ -298,7 +325,7 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
         static_cast<int>(image_.handle_->meta_data_.prime_fds_[0]);
     image_create.format = vk_format;
     image_create.extent = image_extent;
-    image_create.strideInBytes = pitches_[0];
+    image_create.strideInBytes = image_.handle_->meta_data_.pitches_;
 
     res = vkCreateDmaBufImageINTEL(dev, &image_create, NULL, &image_.memory_,
                                    &image_.image_);
@@ -313,6 +340,7 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
 const MediaResourceHandle& DrmBuffer::GetMediaResource(MediaDisplay display,
                                                        uint32_t width,
                                                        uint32_t height) {
+#ifndef DISABLE_VA
   if (media_image_.surface_ != VA_INVALID_ID) {
     if ((previous_width_ == width) && (previous_height_ == height)) {
       return media_image_;
@@ -341,8 +369,8 @@ const MediaResourceHandle& DrmBuffer::GetMediaResource(MediaDisplay display,
   uintptr_t prime_fds[total_planes];
 #endif
   for (unsigned int i = 0; i < total_planes; i++) {
-    external.pitches[i] = pitches_[i];
-    external.offsets[i] = offsets_[i];
+    external.pitches[i] = image_.handle_->meta_data_.pitches_[i];
+    external.offsets[i] = image_.handle_->meta_data_.offsets_[i];
     prime_fds[i] = image_.handle_->meta_data_.prime_fds_[i];
   }
 
@@ -367,6 +395,14 @@ const MediaResourceHandle& DrmBuffer::GetMediaResource(MediaDisplay display,
     ETRACE("Failed to create VASurface from drmbuffer with ret %x", ret);
 
   return media_image_;
+#else
+
+  // FIXME: when va is disabled, this function should
+  // not been called or left to be defined if other media
+  // backend
+  ETRACE("GetMediaResource is not implemented for this Media Backend.");
+  return media_image_;
+#endif
 }
 
 const ResourceHandle& DrmBuffer::GetGpuResource() {
@@ -381,9 +417,11 @@ bool DrmBuffer::CreateFrameBuffer() {
   image_.drm_fd_ = 0;
   media_image_.drm_fd_ = 0;
 
-  image_.drm_fd_ = FrameBufferManager::GetInstance()->FindFB(
-      width_, height_, 0, frame_buffer_format_,
-      image_.handle_->meta_data_.num_planes_, gem_handles_, pitches_, offsets_);
+  image_.drm_fd_ = fb_manager_->FindFB(width_, height_, 0, frame_buffer_format_,
+                                       image_.handle_->meta_data_.num_planes_,
+                                       image_.handle_->meta_data_.gem_handles_,
+                                       image_.handle_->meta_data_.pitches_,
+                                       image_.handle_->meta_data_.offsets_);
   media_image_.drm_fd_ = image_.drm_fd_;
   return true;
 }
@@ -396,9 +434,12 @@ bool DrmBuffer::CreateFrameBufferWithModifier(uint64_t modifier) {
   image_.drm_fd_ = 0;
   media_image_.drm_fd_ = 0;
 
-  image_.drm_fd_ = FrameBufferManager::GetInstance()->FindFB(
+  image_.drm_fd_ = fb_manager_->FindFB(
       width_, height_, modifier, frame_buffer_format_,
-      image_.handle_->meta_data_.num_planes_, gem_handles_, pitches_, offsets_);
+      image_.handle_->meta_data_.num_planes_, 
+      image_.handle_->meta_data_.gem_handles_,
+      image_.handle_->meta_data_.pitches_,
+      image_.handle_->meta_data_.offsets_);
   media_image_.drm_fd_ = image_.drm_fd_;
   return true;
 }
@@ -423,8 +464,8 @@ void DrmBuffer::Dump() {
   DUMPTRACE("Prime Handle: %d", image_.handle_->meta_data_.prime_fds_[0]);
   DUMPTRACE("Format: %4.4s", (char*)&format_);
   for (uint32_t i = 0; i < 4; i++) {
-    DUMPTRACE("Pitch:%d value:%d", i, pitches_[i]);
-    DUMPTRACE("Offset:%d value:%d", i, offsets_[i]);
+    DUMPTRACE("Pitch:%d value:%d", i, image_.handle_->meta_data_.gem_handles_.pitches_[i]);
+    DUMPTRACE("Offset:%d value:%d", i, image_.handle_->meta_data_.gem_handles_.offsets_[i]);
     DUMPTRACE("Gem Handles:%d value:%d", i, gem_handles_[i]);
   }
   DUMPTRACE("DrmBuffer Information Ends. -------------");
