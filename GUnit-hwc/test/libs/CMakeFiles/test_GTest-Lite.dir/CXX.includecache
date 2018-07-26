@@ -1,0 +1,16 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/GUnit/GTest-Lite.h
+
+/home/michelel/Celadon/vendor/intel/external/project-celadon/hwcomposer/GUnit-tests/test/GTest-Lite.cpp
+GUnit/GTest-Lite.h
+/home/michelel/Celadon/vendor/intel/external/project-celadon/hwcomposer/GUnit-tests/test/GUnit/GTest-Lite.h
+cstdlib
+-
+

@@ -206,6 +206,10 @@ bool DrmPlane::Initialize(uint32_t gpu_fd,
   if (in_formats_prop_value != 0) {
     drmModePropertyBlobPtr blob =
         drmModeGetPropertyBlob(gpu_fd, in_formats_prop_value);
+    if (blob == nullptr || blob->data == nullptr) {
+      ETRACE("Unable to get property data\n");
+      return false;
+    }
 
     struct drm_format_modifier_blob* m =
         (struct drm_format_modifier_blob*)(blob->data);
@@ -248,6 +252,8 @@ bool DrmPlane::Initialize(uint32_t gpu_fd,
 
       formats_modifiers_.emplace_back(modifiers_obj);
     }
+
+    drmModeFreePropertyBlob(blob);
   }
   return true;
 }

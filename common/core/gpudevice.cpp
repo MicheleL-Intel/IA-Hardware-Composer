@@ -32,39 +32,34 @@ GpuDevice::~GpuDevice() {
 }
 
 bool GpuDevice::Initialize() {
-  if (initialization_state_ & kInitialized)
+  initialization_state_lock_.lock();
+  if (initialization_state_ & kInitialized) {
+    initialization_state_lock_.unlock();
     return true;
-
-  bool use_thread = true;
-  if (!InitWorker()) {
-    ETRACE("Failed to initalize thread for GpuDevice. %s", PRINTERROR());
-    use_thread = false;
   }
 
-  thread_stage_lock_.lock();
+  initialization_state_ |= kInitialized;
+  initialization_state_lock_.unlock();
+
   display_manager_.reset(DisplayManager::CreateDisplayManager(this));
 
   bool success = display_manager_->Initialize();
   if (!success) {
-    thread_stage_lock_.unlock();
     return false;
   }
 
-  thread_stage_lock_.unlock();
+  display_manager_->InitializeDisplayResources();
+  display_manager_->StartHotPlugMonitor();
+
   HandleHWCSettings();
-  InitializeHotPlugEvents(false);
 
-  // Take the lock to ensure everything is initilized in
-  // Handle Routine.
-  thread_sync_lock_.lock();
-  initialization_state_ |= kInitialized;
-  initialization_state_ &= ~kHWCSettingsDone;
-  thread_sync_lock_.unlock();
-
-  if (use_thread && lock_fd_ == -1) {
-    // Exit thread as we don't need worker thread after
-    // Initialization.
-    HWCThread::Exit();
+  lock_fd_ = open("/vendor/hwc.lock", O_RDONLY);
+  if (-1 != lock_fd_) {
+    if (!InitWorker()) {
+      ETRACE("Failed to initalize thread for GpuDevice. %s", PRINTERROR());
+    }
+  } else {
+    ITRACE("Failed to open " LOCK_DIR_PREFIX "/hwc.lock file!");
   }
 
   return true;
@@ -100,7 +95,7 @@ void GpuDevice::GetConnectedPhysicalDisplays(
   }
 }
 
-std::vector<NativeDisplay *> GpuDevice::GetAllDisplays() {
+const std::vector<NativeDisplay *> &GpuDevice::GetAllDisplays() {
   return total_displays_;
 }
 
@@ -110,20 +105,9 @@ void GpuDevice::RegisterHotPlugEventCallback(
 }
 
 void GpuDevice::HandleHWCSettings() {
-  initialization_state_lock_.lock();
-  if ((initialization_state_ & kHWCSettingsInProgress) ||
-      (initialization_state_ & kHWCSettingsDone)) {
-    initialization_state_lock_.unlock();
-    return;
-  }
-
-  initialization_state_ |= kHWCSettingsInProgress;
-  initialization_state_lock_.unlock();
   // Handle config file reading
-  const char *hwc_dp_cfg_path = std::getenv("HWC_DISPLAY_CONFIG");
-  if (!hwc_dp_cfg_path) {
-    hwc_dp_cfg_path = "/vendor/etc/hwc_display.ini";
-  }
+  const char *hwc_dp_cfg_path = HWC_DISPLAY_INI_PATH;
+  ITRACE("Hwc display config file is %s", hwc_dp_cfg_path);
 
   bool use_logical = false;
   bool use_mosaic = false;
@@ -380,18 +364,28 @@ void GpuDevice::HandleHWCSettings() {
     }
   };
 
-  InitializeHotPlugEvents();
   std::vector<NativeDisplay *> displays;
   std::vector<NativeDisplay *> unordered_displays =
       display_manager_->GetAllDisplays();
   size_t size = unordered_displays.size();
+  uint32_t dispmgr_display_size = (uint32_t) size;
 
   if (physical_displays.empty()) {
     displays.swap(unordered_displays);
   } else {
     size = physical_displays.size();
     for (size_t i = 0; i < size; i++) {
-      displays.emplace_back(unordered_displays.at(physical_displays.at(i)));
+      uint32_t pdisp_index = physical_displays.at(i);
+      // Add the physical display only if it has been enumerated from DRM API.
+      // Skip the non-existence display defined in hwc_display.ini file.
+      if (pdisp_index < dispmgr_display_size) {
+        displays.emplace_back(unordered_displays.at(pdisp_index));
+      } else {
+        ETRACE(
+            "Physical display number: %u defined in hwc_display.ini "
+            "doesn't exist in enumerated DRM display list (total: %u).",
+            pdisp_index, dispmgr_display_size);
+      }
     }
 
     if (displays.size() != unordered_displays.size()) {
@@ -588,11 +582,6 @@ void GpuDevice::HandleHWCSettings() {
       }
     }
   }
-
-  initialization_state_lock_.lock();
-  initialization_state_ &= ~kHWCSettingsInProgress;
-  initialization_state_ |= kHWCSettingsDone;
-  initialization_state_lock_.unlock();
 }
 
 void GpuDevice::EnableHDCPSessionForDisplay(uint32_t display,
@@ -609,8 +598,8 @@ void GpuDevice::EnableHDCPSessionForDisplay(uint32_t display,
 void GpuDevice::EnableHDCPSessionForAllDisplays(HWCContentType content_type) {
   size_t size = total_displays_.size();
   for (size_t i = 0; i < size; i++) {
-    total_displays_.at(i)->SetHDCPState(HWCContentProtection::kDesired,
-                                        content_type);
+    total_displays_.at(i)
+        ->SetHDCPState(HWCContentProtection::kDesired, content_type);
   }
 }
 
@@ -633,31 +622,8 @@ void GpuDevice::DisableHDCPSessionForAllDisplays() {
   }
 }
 
-void GpuDevice::InitializeHotPlugEvents(bool take_lock) {
-  initialization_state_lock_.lock();
-  if ((initialization_state_ & kInitializeHotPlugMonitor) ||
-      (initialization_state_ & kInitializedHotPlugMonitor)) {
-    initialization_state_lock_.unlock();
-    return;
-  }
-
-  initialization_state_ |= kInitializeHotPlugMonitor;
-  if (take_lock) {
-    // Take a lock to ensure displaymanager is all initialized.
-    thread_stage_lock_.lock();
-  }
-  display_manager_->InitializeDisplayResources();
-  display_manager_->StartHotPlugMonitor();
-  if (take_lock)
-    thread_stage_lock_.unlock();
-
-  initialization_state_ |= kInitializedHotPlugMonitor;
-  initialization_state_lock_.unlock();
-}
-
 void GpuDevice::HandleRoutine() {
-  thread_sync_lock_.lock();
-  HandleHWCSettings();
+  bool update_ignored = false;
 
   // Iniitialize resources to monitor external events.
   // These can be two types:
@@ -667,22 +633,22 @@ void GpuDevice::HandleRoutine() {
   // 2) Another app is having control of display and we
   //    we need to take control.
   // TODO: Add splash screen support.
-  lock_fd_ = open("/vendor/hwc.lock", O_RDONLY);
-  if (lock_fd_ == -1) {
-    thread_sync_lock_.unlock();
-    return;
+  if (lock_fd_ != -1) {
+    display_manager_->IgnoreUpdates();
+    update_ignored = true;
+
+    if (flock(lock_fd_, LOCK_EX) != 0) {
+      ETRACE("Failed to wait on the hwc lock.");
+    } else {
+      ITRACE("Successfully grabbed the hwc lock.");
+    }
+
+    close(lock_fd_);
+    lock_fd_ = -1;
   }
 
-  thread_sync_lock_.unlock();
-  display_manager_->IgnoreUpdates();
-
-  if (flock(lock_fd_, LOCK_EX) != 0)
-    ETRACE("Failed to wait on hwc lock.");
-
-  close(lock_fd_);
-  lock_fd_ = -1;
-
-  display_manager_->ForceRefresh();
+  if (update_ignored)
+    display_manager_->ForceRefresh();
 }
 
 void GpuDevice::HandleWait() {

@@ -28,9 +28,11 @@
 #include "hwctrace.h"
 #include "hwcutils.h"
 #include "resourcemanager.h"
-#include "vautils.h"
 
+#ifndef DISABLE_VA
 #include <va/va_drmcommon.h>
+#include "vautils.h"
+#endif
 
 #ifndef EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT
 #define EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT 0x3443
@@ -58,6 +60,7 @@ DrmBuffer::~DrmBuffer() {
   texture_initialized = image_.texture_ != VK_NULL_HANDLE;
 #endif
 
+#ifndef DISABLE_VA
   if (media_image_.surface_ == VA_INVALID_ID) {
     resource_manager_->MarkResourceForDeletion(image_, texture_initialized);
   } else {
@@ -69,6 +72,9 @@ DrmBuffer::~DrmBuffer() {
 
     resource_manager_->MarkMediaResourceForDeletion(media_image_);
   }
+#else
+  resource_manager_->MarkResourceForDeletion(image_, texture_initialized);
+#endif
 }
 
 void DrmBuffer::Initialize(const HwcBuffer& bo) {
@@ -96,13 +102,14 @@ void DrmBuffer::Initialize(const HwcBuffer& bo) {
     frame_buffer_format_ = format_;
   }
 
-  FrameBufferManager::GetInstance()->RegisterGemHandles(
-      image_.handle_->meta_data_.num_planes_,
-      image_.handle_->meta_data_.gem_handles_);
+  fb_manager_->RegisterGemHandles(image_.handle_->meta_data_.num_planes_,
+                                  image_.handle_->meta_data_.gem_handles_);
 }
 
-void DrmBuffer::InitializeFromNativeHandle(HWCNativeHandle handle,
-                                           ResourceManager* resource_manager) {
+void DrmBuffer::InitializeFromNativeHandle(
+    HWCNativeHandle handle, ResourceManager* resource_manager,
+    FrameBufferManager* frame_buffer_manager) {
+  fb_manager_ = frame_buffer_manager;
   resource_manager_ = resource_manager;
   const NativeBufferHandler* handler =
       resource_manager_->GetNativeBufferHandler();
@@ -313,6 +320,7 @@ const ResourceHandle& DrmBuffer::GetGpuResource(GpuDisplay egl_display,
 const MediaResourceHandle& DrmBuffer::GetMediaResource(MediaDisplay display,
                                                        uint32_t width,
                                                        uint32_t height) {
+#ifndef DISABLE_VA
   if (media_image_.surface_ != VA_INVALID_ID) {
     if ((previous_width_ == width) && (previous_height_ == height)) {
       return media_image_;
@@ -367,6 +375,14 @@ const MediaResourceHandle& DrmBuffer::GetMediaResource(MediaDisplay display,
     ETRACE("Failed to create VASurface from drmbuffer with ret %x", ret);
 
   return media_image_;
+#else
+
+  // FIXME: when va is disabled, this function should
+  // not been called or left to be defined if other media
+  // backend
+  ETRACE("GetMediaResource is not implemented for this Media Backend.");
+  return media_image_;
+#endif
 }
 
 const ResourceHandle& DrmBuffer::GetGpuResource() {
@@ -381,9 +397,9 @@ bool DrmBuffer::CreateFrameBuffer() {
   image_.drm_fd_ = 0;
   media_image_.drm_fd_ = 0;
 
-  image_.drm_fd_ = FrameBufferManager::GetInstance()->FindFB(
-      width_, height_, 0, frame_buffer_format_,
-      image_.handle_->meta_data_.num_planes_, gem_handles_, pitches_, offsets_);
+  image_.drm_fd_ = fb_manager_->FindFB(width_, height_, 0, frame_buffer_format_,
+                                       image_.handle_->meta_data_.num_planes_,
+                                       gem_handles_, pitches_, offsets_);
   media_image_.drm_fd_ = image_.drm_fd_;
   return true;
 }
@@ -396,7 +412,7 @@ bool DrmBuffer::CreateFrameBufferWithModifier(uint64_t modifier) {
   image_.drm_fd_ = 0;
   media_image_.drm_fd_ = 0;
 
-  image_.drm_fd_ = FrameBufferManager::GetInstance()->FindFB(
+  image_.drm_fd_ = fb_manager_->FindFB(
       width_, height_, modifier, frame_buffer_format_,
       image_.handle_->meta_data_.num_planes_, gem_handles_, pitches_, offsets_);
   media_image_.drm_fd_ = image_.drm_fd_;
