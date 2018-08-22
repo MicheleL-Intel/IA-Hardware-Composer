@@ -137,7 +137,7 @@ LOCAL_CPPFLAGS += \
 	-DENABLE_RBC
 endif
 
-ifneq ($(strip $(HWC_DISABLE_VA_DRIVER)), true)
+ifneq ($(strip $(HWC_DISABLE_VA_DRIVER)), false)
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/common/compositor/va
 

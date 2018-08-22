@@ -60,7 +60,8 @@ Gralloc1BufferHandler::Gralloc1BufferHandler(uint32_t fd)
       set_format_(nullptr),
       set_producer_usage_(nullptr),
       allocate_(nullptr),
-      set_modifier_(nullptr) {
+      set_modifier_(nullptr),
+      get_interlace_(nullptr) {
 }
 
 Gralloc1BufferHandler::~Gralloc1BufferHandler() {
@@ -121,6 +122,8 @@ bool Gralloc1BufferHandler::Init() {
 #ifdef USE_GRALLOC1
   set_modifier_ = reinterpret_cast<GRALLOC1_PFN_SET_MODIFIER>(
       gralloc1_dvc->getFunction(gralloc1_dvc, GRALLOC1_FUNCTION_SET_MODIFIER));
+  get_interlace_ = reinterpret_cast<GRALLOC1_PFN_GET_INTERLACE>(
+      gralloc1_dvc->getFunction(gralloc1_dvc, GRALLOC1_FUNCTION_GET_INTERLACE));
 #endif
   return true;
 }
@@ -208,6 +211,13 @@ bool Gralloc1BufferHandler::CreateBuffer(uint32_t w, uint32_t h, int format,
 
   temp->hwc_buffer_ = true;
   *handle = temp;
+
+  //#ifdef USE_GRALLOC1
+  //  /* Retrieve is_interlaced flag from Gralloc1 and update corresponding
+  //  HwcBuffer metadata */
+  //  get_interlace_(gralloc1_dvc, handle->handle_,
+  //  handle->meta_data_.is_interlaced_);
+  //#endif
 
   return true;
 }

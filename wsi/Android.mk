@@ -42,7 +42,7 @@ LOCAL_C_INCLUDES := \
         $(LOCAL_PATH)/../wsi \
 	$(LOCAL_PATH)/../wsi/drm
 
-ifeq ($(strip $(HWC_DISABLE_VA_DRIVER)), true)
+ifeq ($(strip $(HWC_DISABLE_VA_DRIVER)), false)
 LOCAL_CPPFLAGS += -DDISABLE_VA
 else
 LOCAL_SHARED_LIBRARIES += \

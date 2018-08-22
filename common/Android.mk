@@ -86,7 +86,7 @@ LOCAL_SRC_FILES := \
         utils/hwcutils.cpp \
         utils/disjoint_layers.cpp
 
-ifneq ($(strip $(HWC_DISABLE_VA_DRIVER)), true)
+ifneq ($(strip $(HWC_DISABLE_VA_DRIVER)), false)
 LOCAL_SHARED_LIBRARIES += \
 	libva \
 	libva-android

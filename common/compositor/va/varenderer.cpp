@@ -150,23 +150,41 @@ bool VARenderer::SetVAProcFilterColorValue(HWCColorControl mode,
   }
 }
 
-bool VARenderer::GetVAProcDeinterlaceFlagFromVideo(HWCDeinterlaceFlag flag) {
+bool VARenderer::GetVAProcDeinterlaceFlagFromVideo(
+    const HWCDeinterlaceFlag flag, const OverlayLayer* layer) {
+  if (layer == NULL) {
+    ETRACE("Invalid layer\n");
+  }
+
   if (flag != HWCDeinterlaceFlag::kDeinterlaceFlagAuto) {
     return false;
   } else {
-    // TODO:Need video buffer meta data to judge if the frame really need
-    // Deinterlace.
+    /* Inspect video buffer metadata in current layer to determine if the frame
+     needs to be deinterlaced. */
+    HWCDeinterlaceControl mode = layer->GetBuffer()->GetInterlaceMode();
+    ETRACE("Interlace mode = (%d)\n", mode);
+    if (mode != HWCDeinterlaceControl::kDeinterlaceNone) {
+      return true;
+    }
   }
   return false;
 }
-bool VARenderer::SetVAProcFilterDeinterlaceMode(
-    const HWCDeinterlaceProp& prop) {
+
+bool VARenderer::SetVAProcFilterDeinterlaceMode(const HWCDeinterlaceProp& prop,
+                                                const OverlayLayer* layer) {
   VAProcDeinterlacingType mode;
+
+  if (layer == NULL) {
+    ETRACE("Invalid layer\n");
+    return false;
+  }
+
   if (prop.flag_ == HWCDeinterlaceFlag::kDeinterlaceFlagNone) {
     SetVAProcFilterDeinterlaceDefaultMode();
     return true;
   } else if (prop.flag_ == HWCDeinterlaceFlag::kDeinterlaceFlagForce ||
-             GetVAProcDeinterlaceFlagFromVideo(prop.flag_)) {
+             GetVAProcDeinterlaceFlagFromVideo(prop.flag_, layer)) {
+    ETRACE("Update frame interlace mode here\n");
     switch (prop.mode_) {
       case HWCDeinterlaceControl::kDeinterlaceNone:
         mode = VAProcDeinterlacingNone;
@@ -280,7 +298,10 @@ bool VARenderer::Draw(const MediaState& state, NativeSurface* surface) {
   for (auto itr = state.colors_.begin(); itr != state.colors_.end(); itr++) {
     SetVAProcFilterColorValue(itr->first, itr->second);
   }
-  SetVAProcFilterDeinterlaceMode(state.deinterlace_);
+
+  if (SetVAProcFilterDeinterlaceMode(state.deinterlace_, state.layer_)) {
+    buffer_out->SetIsInterlaced(true);
+  }
 
   if (!UpdateCaps()) {
     ETRACE("Failed to update capabailities. \n");

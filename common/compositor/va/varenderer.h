@@ -101,12 +101,14 @@ class VARenderer : public Renderer {
   unsigned int GetVAProcFilterScalingMode(uint32_t mode);
   bool SetVAProcFilterColorValue(HWCColorControl type,
                                  const HWCColorProp& prop);
-  bool SetVAProcFilterDeinterlaceMode(const HWCDeinterlaceProp& prop);
+  bool SetVAProcFilterDeinterlaceMode(const HWCDeinterlaceProp& prop,
+                                      const OverlayLayer* layer);
   bool SetVAProcFilterColorDefaultValue(VAProcFilterCapColorBalance* caps);
   bool SetVAProcFilterDeinterlaceDefaultMode();
   bool MapVAProcFilterColorModetoHwc(HWCColorControl& vppmode,
                                      VAProcColorBalanceType vamode);
-  bool GetVAProcDeinterlaceFlagFromVideo(HWCDeinterlaceFlag flag);
+  bool GetVAProcDeinterlaceFlagFromVideo(const HWCDeinterlaceFlag flag,
+                                         const OverlayLayer* layer);
   bool CreateContext();
   void DestroyContext();
   bool LoadCaps();

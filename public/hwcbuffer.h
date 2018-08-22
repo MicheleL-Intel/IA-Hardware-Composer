@@ -20,13 +20,14 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include <cros_gralloc_handle.h>
 #include <hwcdefs.h>
 
 struct HwcBuffer {
   HwcBuffer() = default;
 
   HwcBuffer &operator=(const HwcBuffer &rhs) = delete;
-
+  bool is_interlaced_ = false;
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   uint32_t format_ = 0;  // Drm format equivalent to native_format.
@@ -39,6 +40,8 @@ struct HwcBuffer {
   uint32_t num_planes_ = 0;
   uint32_t fb_modifiers_[8];
   hwcomposer::HWCLayerType usage_ = hwcomposer::kLayerNormal;
+  hwcomposer::HWCDeinterlaceControl interlace_mode_ =
+      hwcomposer::HWCDeinterlaceControl::kDeinterlaceNone;
 };
 
 #endif  // PUBLIC_HWCBUFFER_H_
